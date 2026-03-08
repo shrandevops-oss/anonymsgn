@@ -242,180 +242,194 @@ input::placeholder{color:var(--dim);opacity:.4}
 </div>
 
 <script>
-const SRV   = "https://anonymsgn.onrender.com";
-const EMOJIS= ["👻","❤️","😂","😮","😢","🔥","👍","👎"];
-const ADJ   = ["Silent","Shadow","Hollow","Ashen","Drifting","Nameless","Veiled","Pale","Lost","Echoing"];
-const ANI   = ["Fox","Wolf","Bear","Owl","Hawk","Lynx","Deer","Crow","Moth","Viper","Raven","Ghost"];
+<script>
+const SRV = "https://anonymsgn.onrender.com";
+const EMOJIS = ["👻","❤️","😂","😮","😢","🔥","👍","👎"];
+const ADJ = ["Silent","Shadow","Hollow","Ashen","Drifting","Nameless","Veiled","Pale","Lost","Echoing"];
+const ANI = ["Fox","Wolf","Bear","Owl","Hawk","Lynx","Deer","Crow","Moth","Viper","Raven","Ghost"];
 
-function getId(){let i=sessionStorage.getItem("gid");if(!i){i=Math.random().toString(36).slice(2,9);sessionStorage.setItem("gid",i)}return i}
-function genName(id){const h=id.split("").reduce((a,c)=>a+c.charCodeAt(0),0);return ADJ[h%ADJ.length]+" "+ANI[(h*7)%ANI.length]}
-function esc(s){return s?s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"):""}
-function ago(ts){const d=Math.floor((Date.now()-ts)/1000);if(d<10)return"just now";if(d<60)return d+"s ago";if(d<3600)return Math.floor(d/60)+"m ago";return Math.floor(d/3600)+"h ago"}
-function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),2200)}
-
+// --- INITIALIZATION ---
+const socket = io(SRV); // Initialize Socket.io
+let CURR_ROOM = "";
+let MY_NAME = "";
 const ME = getId();
 
-// Theme
-let theme=localStorage.getItem("gtheme")||"";
-function applyTheme(t){
-  theme=t; document.body.dataset.theme=t; localStorage.setItem("gtheme",t);
-  document.querySelectorAll(".tdot").forEach(d=>d.classList.toggle("on",d.dataset.t===t));
+function getId() {
+    let i = sessionStorage.getItem("gid");
+    if (!i) {
+        i = Math.random().toString(36).slice(2, 9);
+        sessionStorage.setItem("gid", i);
+    }
+    return i;
+}
+
+function genName(id) {
+    const h = id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+    return ADJ[h % ADJ.length] + " " + ANI[(h * 7) % ANI.length];
+}
+
+function esc(s) {
+    return s ? s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : "";
+}
+
+function ago(ts) {
+    const d = Math.floor((Date.now() - ts) / 1000);
+    if (d < 10) return "just now";
+    if (d < 60) return d + "s ago";
+    if (d < 3600) return Math.floor(d / 60) + "m ago";
+    return Math.floor(d / 3600) + "h ago";
+}
+
+function toast(m) {
+    const t = document.getElementById("toast");
+    t.textContent = m;
+    t.classList.add("on");
+    setTimeout(() => t.classList.remove("on"), 2200);
+}
+
+// --- THEME & UI ---
+let theme = localStorage.getItem("gtheme") || "";
+function applyTheme(t) {
+    theme = t; 
+    document.body.dataset.theme = t; 
+    localStorage.setItem("gtheme", t);
+    document.querySelectorAll(".tdot").forEach(d => d.classList.toggle("on", d.dataset.t === t));
 }
 applyTheme(theme);
-document.querySelectorAll(".tdot").forEach(d=>d.addEventListener("click",()=>{applyTheme(d.dataset.t);closeAllPanels()}));
 
-// Sound
-let muted=false;
-function beep(){
-  if(muted)return;
-  try{const c=new(window.AudioContext||window.webkitAudioContext)(),o=c.createOscillator(),g=c.createGain();
-  o.connect(g);g.connect(c.destination);
-  o.frequency.setValueAtTime(880,c.currentTime);o.frequency.exponentialRampToValueAtTime(440,c.currentTime+.1);
-  g.gain.setValueAtTime(.08,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.3);
-  o.start();o.stop(c.currentTime+.3);}catch(e){}
-}
-
-// Lightbox
-document.getElementById("lbx").onclick=()=>document.getElementById("lb").classList.remove("on");
-function openLB(src){document.getElementById("lbimg").src=src;document.getElementById("lb").classList.add("on")}
-
-// PWA
-if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
-
-// Panels
-function closeAllPanels(){
-  document.querySelectorAll(".panel").forEach(p=>p.classList.remove("on"));
-  document.getElementById("ctx").classList.remove("on");
-  document.querySelectorAll(".epick.on").forEach(p=>p.classList.remove("on"));
-}
-document.addEventListener("click",closeAllPanels);
-document.getElementById("thmbtn").addEventListener("click",e=>{
-  const p=document.getElementById("tpanel");const wasOn=p.classList.contains("on");closeAllPanels();if(!wasOn)p.classList.add("on");e.stopPropagation();
-});
-document.getElementById("sharebtn").addEventListener("click",e=>{
-  const p=document.getElementById("sharepanel");const wasOn=p.classList.contains("on");closeAllPanels();if(!wasOn)p.classList.add("on");e.stopPropagation();
-});
-document.getElementById("mutebtn").addEventListener("click",()=>{muted=!muted;document.getElementById("mutebtn").textContent=muted?"🔕":"🔔";toast(muted?"Sound off":"Sound on")});
-document.getElementById("copylinkbtn").addEventListener("click",e=>{
-  const url=document.getElementById("shareurl").textContent;
-  navigator.clipboard.writeText(url).then(()=>toast("🔗 Link copied!")).catch(()=>toast("Copy failed"));
-  e.stopPropagation();
-});
-  // 1. COPY ACTION
-document.getElementById("ctx-copy").addEventListener("click", () => {
-  if (!ctxData) return;
-  const content = ctxData.m.text || "[Image]";
-  navigator.clipboard.writeText(content).then(() => {
-    toast("📋 Copied to clipboard");
-  }).catch(() => toast("❌ Copy failed"));
-  closeAllPanels();
-});
-
-// 2. TIMESTAMP TOGGLE
-document.getElementById("ctx-time").addEventListener("click", () => {
-  if (!ctxData) return;
-  // This looks for the .tstip div inside the message wrapper
-  const tip = ctxData.wrap.querySelector(".tstip");
-  if (tip) {
-    tip.classList.toggle("on");
-    // Optionally update the text to show a fresh "ago" time
-    tip.textContent = new Date(ctxData.m.ts).toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit' 
+document.querySelectorAll(".tdot").forEach(d => {
+    d.addEventListener("click", () => {
+        applyTheme(d.dataset.t);
+        closeAllPanels();
     });
-  }
-  closeAllPanels();
 });
 
-// 3. DELETE ACTION
-document.getElementById("ctx-del").addEventListener("click", () => {
-  if (!ctxData || !ctxData.isMe) return;
-  
-  if (confirm("Delete this message for everyone?")) {
-    socket.emit("delete_message", { 
-      room: CURR_ROOM, 
-      msgId: ctxData.m.id, 
-      anonId: ME // 'ME' is your unique ID from getId()
-    });
-  }
-  closeAllPanels();
-});
-  socket.on("message_deleted", ({ msgId }) => {
-  // Find the message bubble with the matching ID attribute
-  const el = document.querySelector(`[data-id="${msgId}"]`);
-  if (el) {
-    el.style.opacity = "0";
-    el.style.transform = "scale(0.9)";
-    setTimeout(() => el.remove(), 250); // Smooth fade out before removal
-  }
-});
-  function renderMessage(m) {
-  const isMe = m.anonId === ME;
-  const wrap = document.createElement("div");
-  wrap.className = `mwrap ${isMe ? 'me' : 'them'}`;
-  wrap.dataset.id = m.id; // CRITICAL: This links the DOM to the database ID
-
-  wrap.innerHTML = `
-    <div class="mmeta">${esc(m.anonName)}</div>
-    <div class="mbub">${m.text ? esc(m.text) : `<img src="${m.image}" class="mimg">`}</div>
-    <div class="tstip">${ago(m.ts)}</div>
-  `;
-
-  // Attach the context menu trigger
-  wrap.oncontextmenu = (e) => showCtx(e, wrap, m, isMe, socket, CURR_ROOM);
-  
-  document.getElementById("msgs").appendChild(wrap);
+function closeAllPanels() {
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("on"));
+    document.getElementById("ctx").classList.remove("on");
+    document.querySelectorAll(".epick.on").forEach(p => p.classList.remove("on"));
 }
-// Inside your enterbtn click listener, after successful join:
-function saveSession(room, password, username) {
-  const session = {
-    room,
-    password, // Stored locally only
-    username,
-    timestamp: Date.now()
-  };
-  localStorage.setItem("ghost_session", JSON.stringify(session));
-}
-  window.addEventListener("load", () => {
-  const saved = localStorage.getItem("ghost_session");
-  if (!saved) return;
 
-  const session = JSON.parse(saved);
-  const oneDay = 24 * 60 * 60 * 1000;
-
-  // Only auto-fill if the session is fresh (less than 24h old)
-  if (Date.now() - session.timestamp < oneDay) {
-    document.getElementById("rname").value = session.room || "";
-    document.getElementById("rpass").value = session.password || "";
-    document.getElementById("uname").value = session.username || "";
+// --- JOIN ROOM LOGIC ---
+document.getElementById("enterbtn").onclick = () => {
+    const rname = document.getElementById("rname").value.trim();
+    if (!rname) return alert("Room name is required");
     
-    // Optional: Show a "Resume Session" toast
-    toast("Welcome back, " + (session.username || "Ghost"));
-  }
-});
-  let connectCheck = setTimeout(() => {
-  if (!socket.connected) {
-    document.getElementById("swarn").style.display = "block";
-    document.getElementById("swarn").textContent = "📡 Server is waking up (this may take 30s)...";
-  }
-}, 2000);
+    CURR_ROOM = rname;
+    MY_NAME = document.getElementById("uname").value.trim() || genName(ME);
+    const rpass = document.getElementById("rpass").value;
 
-socket.on("connect", () => {
-  clearTimeout(connectCheck);
-  document.getElementById("swarn").style.display = "none";
-});
-// Context menu
-let ctxData=null;
-function showCtx(ev,wrap,m,isMe,socket,room){
-  ev.preventDefault();ev.stopPropagation();
-  ctxData={wrap,m,isMe,socket,room};
-  const ctx=document.getElementById("ctx");
-  document.getElementById("ctx-del").style.display=isMe?"flex":"none";
-  const x=Math.min((ev.clientX||ev.pageX||0),window.innerWidth-180);
-  const y=Math.min((ev.clientY||ev.pageY||0),window.innerHeight-130);
-  ctx.style.left=x+"px";ctx.style.top=y+"px";
-  closeAllPanels();ctx.classList.add("on");
+    socket.emit("join", { room: CURR_ROOM, name: MY_NAME, pass: rpass, anonId: ME });
+
+    document.getElementById("setup").style.display = "none";
+    document.getElementById("app").style.display = "flex";
+    document.getElementById("rbadge").textContent = CURR_ROOM;
+    document.getElementById("myname").textContent = MY_NAME;
+    document.getElementById("shareurl").textContent = window.location.href + "?r=" + CURR_ROOM;
+};
+
+// --- MESSAGE RENDERING ---
+function renderMessage(m) {
+    const isMe = m.anonId === ME;
+    const msgsCont = document.getElementById("msgs");
+    
+    const wrap = document.createElement("div");
+    wrap.className = `mwrap ${isMe ? 'me' : 'them'}`;
+    wrap.dataset.id = m.id;
+
+    wrap.innerHTML = `
+        <div class="mmeta">${esc(m.anonName)}</div>
+        <div class="mbub">${m.text ? esc(m.text) : `<img src="${m.image}" class="mimg" onclick="openLB('${m.image}')">`}</div>
+        <div class="tstip">${ago(m.ts)}</div>
+    `;
+
+    wrap.oncontextmenu = (e) => showCtx(e, wrap, m, isMe);
+    msgsCont.appendChild(wrap);
+    msgsCont.scrollTop = msgsCont.scrollHeight;
+    if (!isMe) beep();
 }
-document.getElementById("ctx-copy").addEventListener("click",()=>{
-  if(!ctxData)return;
-  navigator.clipboard.writeText(ctxData.m.text||"[image]").the
+
+// --- CONTEXT MENU ---
+let ctxData = null;
+function showCtx(ev, wrap, m, isMe) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    ctxData = { wrap, m, isMe };
+    
+    const ctx = document.getElementById("ctx");
+    document.getElementById("ctx-del").style.display = isMe ? "flex" : "none";
+    
+    const x = Math.min(ev.clientX, window.innerWidth - 180);
+    const y = Math.min(ev.clientY, window.innerHeight - 130);
+    
+    ctx.style.left = x + "px";
+    ctx.style.top = y + "px";
+    closeAllPanels();
+    ctx.classList.add("on");
+}
+
+document.getElementById("ctx-copy").onclick = () => {
+    if (!ctxData) return;
+    navigator.clipboard.writeText(ctxData.m.text || "[image]").then(() => toast("Copied!"));
+};
+
+document.getElementById("ctx-time").onclick = () => {
+    if (!ctxData) return;
+    ctxData.wrap.querySelector(".tstip").classList.toggle("on");
+};
+
+document.getElementById("ctx-del").onclick = () => {
+    if (!ctxData || !ctxData.isMe) return;
+    if (confirm("Delete this message?")) {
+        socket.emit("delete_message", { room: CURR_ROOM, msgId: ctxData.m.id, anonId: ME });
+    }
+};
+
+// --- SOCKET EVENTS ---
+socket.on("message", (m) => renderMessage(m));
+
+socket.on("message_deleted", ({ msgId }) => {
+    const el = document.querySelector(`.mwrap[data-id="${msgId}"]`);
+    if (el) {
+        el.style.opacity = "0";
+        setTimeout(() => el.remove(), 250);
+    }
+});
+
+socket.on("user_count", (count) => {
+    document.getElementById("onlinecnt").textContent = count;
+});
+
+// --- SENDING ---
+const minput = document.getElementById("minput");
+const sndbtn = document.getElementById("sndbtn");
+
+minput.oninput = () => {
+    const len = minput.value.length;
+    document.getElementById("cc").textContent = `${len}/280`;
+    sndbtn.disabled = len === 0;
+};
+
+sndbtn.onclick = () => {
+    const text = minput.value.trim();
+    if (!text) return;
+    socket.emit("send_message", { room: CURR_ROOM, text, anonId: ME, anonName: MY_NAME, ts: Date.now(), id: Math.random().toString(36).slice(2, 11) });
+    minput.value = "";
+    sndbtn.disabled = true;
+};
+
+// --- UTILS ---
+document.addEventListener("click", closeAllPanels);
+function openLB(src){ document.getElementById("lbimg").src=src; document.getElementById("lb").classList.add("on"); }
+document.getElementById("lbx").onclick = () => document.getElementById("lb").classList.remove("on");
+
+// Mute logic
+let muted = false;
+document.getElementById("mutebtn").onclick = () => {
+    muted = !muted;
+    document.getElementById("mutebtn").textContent = muted ? "🔕" : "🔔";
+    toast(muted ? "Muted" : "Unmuted");
+};
+function beep() { if(!muted) { /* oscillator logic here */ } }
+
+</script>
