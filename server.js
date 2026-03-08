@@ -12,7 +12,9 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
   maxHttpBufferSize: 5 * 1024 * 1024,
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  transports: ["polling", "websocket"],  // polling first = more reliable on Render free tier
+  allowEIO3: true
 });
 
 app.use(cors());
