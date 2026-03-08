@@ -50,7 +50,22 @@ function getRoomSize(roomName) {
   const room = io.sockets.adapter.rooms.get(roomName);
   return room ? room.size : 0;
 }
+const path = require("path");
 
+// 1. Serve the public folder
+app.use(express.static(path.join(__dirname, "public")));
+
+// 2. Specific route for manifest.json with correct MIME type
+app.get("/manifest.json", (req, res) => {
+  res.setHeader("Content-Type", "application/manifest+json");
+  res.sendFile(path.join(__dirname, "public", "manifest.json"));
+});
+
+// 3. Specific route for Service Worker
+app.get("/sw.js", (req, res) => {
+  res.setHeader("Content-Type", "application/javascript");
+  res.sendFile(path.join(__dirname, "public", "sw.js"));
+});
 io.on("connection", (socket) => {
   console.log("+ connected:", socket.id);
 
@@ -127,3 +142,4 @@ setInterval(() => {
     console.log("keep-alive:", res.statusCode);
   }).on("error", (err) => console.log("ping err:", err.message));
 }, 13 * 60 * 1000);
+
