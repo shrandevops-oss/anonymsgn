@@ -8,109 +8,83 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 
-// Initialize Socket.io with CORS and buffer limits
 const io = new Server(server, {
-  cors: { 
-    origin: "*", 
-    methods: ["GET", "POST"] 
-  },
-  transports: ["websocket", "polling"], // Allow fallback to polling if WS fails
-  allowEIO3: true // Support older socket.io clients if necessary
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  maxHttpBufferSize: 5 * 1024 * 1024,
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
-
-// --- STATIC FILE ROUTING ---
-// Serves everything inside the /public folder (index.html, sw.js, manifest.json, icons)
 app.use(express.static(path.join(__dirname, "public")));
 
-// Explicitly define PWA files to ensure correct Content-Type headers
-app.get("/manifest.json", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "manifest.json"));
-});
-
-app.get("/sw.js", (req, res) => {
-  res.set("Service-Worker-Allowed", "/");
-  res.sendFile(path.join(__dirname, "public", "sw.js"));
-});
-
-// Health check and Keep-alive endpoint
-app.get("/ping", (req, res) => res.send("pong"));
-
-// --- CHAT LOGIC ---
-const rooms = {};
-
-function getRoom(name) {
-  if (!rooms[name]) {
-    rooms[name] = { password: null, messages: [], createdAt: Date.now() };
-  }
-  return rooms[name];
-}
-
-function getRoomSize(roomName) {
-  const room = io.sockets.adapter.rooms.get(roomName);
-  return room ? room.size : 0;
-}
-const path = require("path");
-
-// 1. Serve the public folder
-app.use(express.static(path.join(__dirname, "public")));
-
-// 2. Specific route for manifest.json with correct MIME type
 app.get("/manifest.json", (req, res) => {
   res.setHeader("Content-Type", "application/manifest+json");
   res.sendFile(path.join(__dirname, "public", "manifest.json"));
 });
-
-// 3. Specific route for Service Worker
 app.get("/sw.js", (req, res) => {
   res.setHeader("Content-Type", "application/javascript");
+  res.setHeader("Service-Worker-Allowed", "/");
   res.sendFile(path.join(__dirname, "public", "sw.js"));
 });
+app.get("/ping", (req, res) => res.send("pong"));
+
+const rooms = {};
+const typingUsers = {};
+
+function getRoom(name) {
+  if (!rooms[name]) rooms[name] = { password: null, messages: [], createdAt: Date.now() };
+  return rooms[name];
+}
+function getRoomSize(roomName) {
+  return io.sockets.adapter.rooms.get(roomName)?.size || 0;
+}
+
+// Auto-delete messages older than 24h
+setInterval(() => {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const name of Object.keys(rooms)) {
+    rooms[name].messages = rooms[name].messages.filter(m => m.ts > cutoff);
+  }
+}, 10 * 60 * 1000);
+
 io.on("connection", (socket) => {
   console.log("+ connected:", socket.id);
 
-  socket.on("join", ({ room, pass, name, anonId }) => {
+  socket.on("join_room", ({ room, password, username }) => {
     if (!room) return;
     const r = getRoom(room);
 
-    // Password check
-    if (r.password && r.password !== pass) {
-      return socket.emit("error_msg", "Wrong password");
+    if (r.password && r.password !== password) {
+      socket.emit("wrong_password");
+      return;
     }
-    if (!r.password && pass) r.password = pass;
+    if (!r.password && password) r.password = password;
 
     socket.join(room);
     socket.currentRoom = room;
-    socket.myName = name || "Ghost";
+    socket.myName = username || "Ghost";
 
-    // Load history for the joining user
     socket.emit("load_messages", r.messages);
-    
-    // Update online count for the whole room
     io.to(room).emit("online_count", getRoomSize(room));
-    socket.to(room).emit("system_message", { text: `${socket.myName} joined` });
+    socket.to(room).emit("system_message", { text: socket.myName + " joined" });
   });
 
-  socket.on("send_message", (data) => {
-    const { room, text, image, anonId, anonName } = data;
+  socket.on("send_message", ({ room, text, image, anonId, anonName }) => {
     if (!room || (!text && !image)) return;
-    
     const r = getRoom(room);
     const msg = {
       id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
       text: text ? String(text).slice(0, 280) : null,
       image: image || null,
-      anonId, 
-      anonName,
-      ts: Date.now()
+      anonId, anonName,
+      ts: Date.now(),
+      reactions: {}
     };
-
     r.messages.push(msg);
     if (r.messages.length > 100) r.messages.shift();
-    
-    io.to(room).emit("message", msg);
+    io.to(room).emit("new_message", msg);
   });
 
   socket.on("delete_message", ({ room, msgId, anonId }) => {
@@ -122,27 +96,51 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("add_reaction", ({ room, msgId, emoji, anonId }) => {
+    const r = getRoom(room);
+    const msg = r.messages.find(m => m.id === msgId);
+    if (!msg) return;
+    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+    const idx = msg.reactions[emoji].indexOf(anonId);
+    if (idx === -1) msg.reactions[emoji].push(anonId);
+    else {
+      msg.reactions[emoji].splice(idx, 1);
+      if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
+    }
+    io.to(room).emit("update_reactions", { msgId, reactions: msg.reactions });
+  });
+
+  socket.on("typing_start", ({ room, anonName }) => {
+    if (!typingUsers[room]) typingUsers[room] = {};
+    typingUsers[room][socket.id] = anonName;
+    socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
+  });
+
+  socket.on("typing_stop", ({ room }) => {
+    if (typingUsers[room]) {
+      delete typingUsers[room][socket.id];
+      socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
+    }
+  });
+
   socket.on("disconnect", () => {
     const room = socket.currentRoom;
     if (room) {
-      io.to(room).emit("online_count", getRoomSize(room));
-      socket.to(room).emit("system_message", { text: `${socket.myName || "Someone"} left` });
+      if (typingUsers[room]) {
+        delete typingUsers[room][socket.id];
+        socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
+      }
+      socket.to(room).emit("system_message", { text: (socket.myName || "Someone") + " left" });
+      socket.to(room).emit("online_count", getRoomSize(room));
     }
     console.log("- disconnected:", socket.id);
   });
 });
 
-// --- SERVER START ---
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✓ ghost. server running on port ${PORT}`);
-});
+server.listen(PORT, "0.0.0.0", () => console.log("✓ ghost. server on port", PORT));
 
-// Keep-alive to prevent Render sleep (Optional but recommended)
 setInterval(() => {
-  https.get("https://anonymsgn.onrender.com/ping", (res) => {
-    console.log("keep-alive:", res.statusCode);
-  }).on("error", (err) => console.log("ping err:", err.message));
+  https.get("https://anonymsgn.onrender.com/ping", r => console.log("keep-alive:", r.statusCode))
+       .on("error", e => console.log("ping err:", e.message));
 }, 13 * 60 * 1000);
-
-
