@@ -301,7 +301,109 @@ document.getElementById("copylinkbtn").addEventListener("click",e=>{
   navigator.clipboard.writeText(url).then(()=>toast("🔗 Link copied!")).catch(()=>toast("Copy failed"));
   e.stopPropagation();
 });
+  // 1. COPY ACTION
+document.getElementById("ctx-copy").addEventListener("click", () => {
+  if (!ctxData) return;
+  const content = ctxData.m.text || "[Image]";
+  navigator.clipboard.writeText(content).then(() => {
+    toast("📋 Copied to clipboard");
+  }).catch(() => toast("❌ Copy failed"));
+  closeAllPanels();
+});
 
+// 2. TIMESTAMP TOGGLE
+document.getElementById("ctx-time").addEventListener("click", () => {
+  if (!ctxData) return;
+  // This looks for the .tstip div inside the message wrapper
+  const tip = ctxData.wrap.querySelector(".tstip");
+  if (tip) {
+    tip.classList.toggle("on");
+    // Optionally update the text to show a fresh "ago" time
+    tip.textContent = new Date(ctxData.m.ts).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  }
+  closeAllPanels();
+});
+
+// 3. DELETE ACTION
+document.getElementById("ctx-del").addEventListener("click", () => {
+  if (!ctxData || !ctxData.isMe) return;
+  
+  if (confirm("Delete this message for everyone?")) {
+    socket.emit("delete_message", { 
+      room: CURR_ROOM, 
+      msgId: ctxData.m.id, 
+      anonId: ME // 'ME' is your unique ID from getId()
+    });
+  }
+  closeAllPanels();
+});
+  socket.on("message_deleted", ({ msgId }) => {
+  // Find the message bubble with the matching ID attribute
+  const el = document.querySelector(`[data-id="${msgId}"]`);
+  if (el) {
+    el.style.opacity = "0";
+    el.style.transform = "scale(0.9)";
+    setTimeout(() => el.remove(), 250); // Smooth fade out before removal
+  }
+});
+  function renderMessage(m) {
+  const isMe = m.anonId === ME;
+  const wrap = document.createElement("div");
+  wrap.className = `mwrap ${isMe ? 'me' : 'them'}`;
+  wrap.dataset.id = m.id; // CRITICAL: This links the DOM to the database ID
+
+  wrap.innerHTML = `
+    <div class="mmeta">${esc(m.anonName)}</div>
+    <div class="mbub">${m.text ? esc(m.text) : `<img src="${m.image}" class="mimg">`}</div>
+    <div class="tstip">${ago(m.ts)}</div>
+  `;
+
+  // Attach the context menu trigger
+  wrap.oncontextmenu = (e) => showCtx(e, wrap, m, isMe, socket, CURR_ROOM);
+  
+  document.getElementById("msgs").appendChild(wrap);
+}
+// Inside your enterbtn click listener, after successful join:
+function saveSession(room, password, username) {
+  const session = {
+    room,
+    password, // Stored locally only
+    username,
+    timestamp: Date.now()
+  };
+  localStorage.setItem("ghost_session", JSON.stringify(session));
+}
+  window.addEventListener("load", () => {
+  const saved = localStorage.getItem("ghost_session");
+  if (!saved) return;
+
+  const session = JSON.parse(saved);
+  const oneDay = 24 * 60 * 60 * 1000;
+
+  // Only auto-fill if the session is fresh (less than 24h old)
+  if (Date.now() - session.timestamp < oneDay) {
+    document.getElementById("rname").value = session.room || "";
+    document.getElementById("rpass").value = session.password || "";
+    document.getElementById("uname").value = session.username || "";
+    
+    // Optional: Show a "Resume Session" toast
+    toast("Welcome back, " + (session.username || "Ghost"));
+  }
+});
+  let connectCheck = setTimeout(() => {
+  if (!socket.connected) {
+    document.getElementById("swarn").style.display = "block";
+    document.getElementById("swarn").textContent = "📡 Server is waking up (this may take 30s)...";
+  }
+}, 2000);
+
+socket.on("connect", () => {
+  clearTimeout(connectCheck);
+  document.getElementById("swarn").style.display = "none";
+});
 // Context menu
 let ctxData=null;
 function showCtx(ev,wrap,m,isMe,socket,room){
