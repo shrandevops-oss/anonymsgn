@@ -51,6 +51,8 @@ io.on("connection", (socket) => {
     socket.username = username || null;
     socket.emit("load_messages", r.messages);
     io.to(room).emit("system_message", { text: `${username || "someone"} joined` });
+    // 👥 broadcast online count
+    io.to(room).emit("online_count", io.sockets.adapter.rooms.get(room)?.size || 1);
   });
 
   // Send message (text or image)
@@ -100,6 +102,16 @@ io.on("connection", (socket) => {
     io.to(room).emit("update_reactions", { msgId, reactions: msg.reactions });
   });
 
+  // 🗑️ Delete message
+  socket.on("delete_message", ({ room, msgId, anonId }) => {
+    const r = getRoom(room);
+    const idx = r.messages.findIndex(m => m.id === msgId && m.anonId === anonId);
+    if (idx !== -1) {
+      r.messages.splice(idx, 1);
+      io.to(room).emit("message_deleted", { msgId });
+    }
+  });
+
   socket.on("disconnect", () => {
     if (socket.currentRoom) {
       if (typingUsers[socket.currentRoom]) {
@@ -107,6 +119,8 @@ io.on("connection", (socket) => {
         socket.to(socket.currentRoom).emit("typing_update", Object.values(typingUsers[socket.currentRoom]));
       }
       io.to(socket.currentRoom).emit("system_message", { text: `${socket.username || "someone"} left` });
+      const size = io.sockets.adapter.rooms.get(socket.currentRoom)?.size || 0;
+      io.to(socket.currentRoom).emit("online_count", size);
     }
   });
 });
