@@ -7,16 +7,16 @@ const cors = require("cors");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  maxHttpBufferSize: 5 * 1024 * 1024 // 5MB for image sharing
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "5mb" }));
 app.use(express.static("public"));
 
 app.get("/ping", (req, res) => res.send("pong"));
 
-// rooms[name] = { password, messages: [], createdAt }
 const rooms = {};
 
 function getRoom(name) {
@@ -24,52 +24,44 @@ function getRoom(name) {
   return rooms[name];
 }
 
-// Auto-delete messages older than 24 hours every 10 minutes
+// Auto-delete messages older than 24 hours
 setInterval(() => {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   Object.keys(rooms).forEach(name => {
     rooms[name].messages = rooms[name].messages.filter(m => m.ts > cutoff);
   });
-  console.log("Auto-cleanup done");
 }, 10 * 60 * 1000);
+
+// Track typing users per room
+const typingUsers = {};
 
 io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
-  // Join room with optional password
-  socket.on("join_room", ({ room, password }) => {
+  socket.on("join_room", ({ room, password, username }) => {
     const r = getRoom(room);
-
-    // If room has password, verify it
     if (r.password && r.password !== password) {
       socket.emit("wrong_password");
       return;
     }
-
-    // If no password set yet and one provided, set it
-    if (!r.password && password) {
-      r.password = password;
-    }
+    if (!r.password && password) r.password = password;
 
     socket.join(room);
     socket.currentRoom = room;
-
-    // Send existing messages
+    socket.username = username || null;
     socket.emit("load_messages", r.messages);
-
-    // Notify others
-    io.to(room).emit("system_message", { text: "someone joined" });
-    console.log(`${socket.id} joined room: ${room}`);
+    io.to(room).emit("system_message", { text: `${username || "someone"} joined` });
   });
 
-  // New message
+  // Send message (text or image)
   socket.on("send_message", (data) => {
-    const { room, text, anonId, anonName } = data;
-    if (!text || !room) return;
+    const { room, text, image, anonId, anonName } = data;
+    if ((!text && !image) || !room) return;
     const r = getRoom(room);
     const msg = {
       id: Date.now().toString(),
-      text: text.slice(0, 280),
+      text: text ? text.slice(0, 280) : null,
+      image: image || null, // base64 image
       anonId, anonName,
       ts: Date.now(),
       reactions: {}
@@ -79,17 +71,29 @@ io.on("connection", (socket) => {
     io.to(room).emit("new_message", msg);
   });
 
+  // 👀 Typing indicator
+  socket.on("typing_start", ({ room, anonName }) => {
+    if (!typingUsers[room]) typingUsers[room] = {};
+    typingUsers[room][socket.id] = anonName;
+    socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
+  });
+
+  socket.on("typing_stop", ({ room }) => {
+    if (typingUsers[room]) {
+      delete typingUsers[room][socket.id];
+      socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
+    }
+  });
+
   // Emoji reaction
   socket.on("add_reaction", ({ room, msgId, emoji, anonId }) => {
     const r = getRoom(room);
     const msg = r.messages.find(m => m.id === msgId);
     if (!msg) return;
     if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
-    // Toggle reaction
     const idx = msg.reactions[emoji].indexOf(anonId);
-    if (idx === -1) {
-      msg.reactions[emoji].push(anonId);
-    } else {
+    if (idx === -1) msg.reactions[emoji].push(anonId);
+    else {
       msg.reactions[emoji].splice(idx, 1);
       if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
     }
@@ -98,7 +102,11 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     if (socket.currentRoom) {
-      io.to(socket.currentRoom).emit("system_message", { text: "someone left" });
+      if (typingUsers[socket.currentRoom]) {
+        delete typingUsers[socket.currentRoom][socket.id];
+        socket.to(socket.currentRoom).emit("typing_update", Object.values(typingUsers[socket.currentRoom]));
+      }
+      io.to(socket.currentRoom).emit("system_message", { text: `${socket.username || "someone"} left` });
     }
   });
 });
@@ -106,7 +114,7 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`✓ Server on port ${PORT}`));
 
-// Keep-alive ping every 14 minutes
+// Keep-alive
 setInterval(() => {
   https.get("https://anonymsgn.onrender.com/ping", () => {
     console.log("Keep-alive ✓");
