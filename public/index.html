@@ -290,7 +290,7 @@ function attemptConnect(room,pass,name,tries){
   sptxt.textContent=tries>1?"retrying ("+tries+"/3)...":"connecting...";
 
   function trySocket(){
-    const socket=io(SRV,{timeout:30000,transports:["websocket","polling"],reconnectionAttempts:0,forceNew:true});
+    const socket=io(SRV,{timeout:30000,transports:["polling","websocket"],reconnectionAttempts:0,forceNew:true});
     let connected=false;
     const failTimer=setTimeout(()=>{if(!connected){socket.disconnect();attemptConnect(room,pass,name,tries+1)}},28000);
 
