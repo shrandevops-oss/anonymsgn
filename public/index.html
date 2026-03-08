@@ -140,6 +140,31 @@
     /* TOAST */
     #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--mbg);border:1px solid var(--acc);border-radius:8px;padding:9px 16px;font-size:12px;color:var(--mtxt);letter-spacing:1px;z-index:500;opacity:0;pointer-events:none;transition:opacity .3s;white-space:nowrap}
     #toast.on{opacity:1}
+
+    /* ONLINE COUNT */
+    #onlinebadge{font-size:10px;color:#3a7a3a;letter-spacing:1px;border:1px solid #1a4a1a;padding:3px 7px;border-radius:4px;display:flex;align-items:center;gap:4px}
+    .gdot{width:5px;height:5px;border-radius:50%;background:#3a9a3a;display:inline-block;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+    /* CONTEXT MENU */
+    #ctx{display:none;position:fixed;background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;padding:6px;z-index:600;box-shadow:0 4px 20px rgba(0,0,0,.6);min-width:160px}
+    #ctx.on{display:block}
+    .citem{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;color:var(--txt);cursor:pointer;border-radius:6px;letter-spacing:.5px;transition:background .15s}
+    .citem:hover{background:var(--bdr)}
+    .citem.red{color:#c05050}
+    .citem.red:hover{background:#2a1010}
+
+    /* TIMESTAMP TOOLTIP */
+    .tstip{display:none;font-size:10px;color:var(--dim);letter-spacing:1px;margin-top:3px;text-align:center;opacity:.7}
+    .tstip.on{display:block}
+
+    /* SHARE PANEL */
+    #sharepanel{display:none;position:absolute;top:58px;right:16px;background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;padding:14px;z-index:50;box-shadow:0 4px 20px rgba(0,0,0,.5);min-width:220px}
+    #sharepanel.on{display:block}
+    #sharepanel p{font-size:10px;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+    #shareurl{width:100%;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:7px 10px;color:var(--txt);font-family:'Space Mono',monospace;font-size:11px;margin-bottom:8px;word-break:break-all}
+    #copylinkbtn{width:100%;background:transparent;border:1px solid var(--acc);color:var(--hi);border-radius:6px;padding:7px;font-family:'Space Mono',monospace;font-size:11px;cursor:pointer;letter-spacing:1px;text-transform:uppercase;transition:all .2s}
+    #copylinkbtn:hover{background:var(--hi);color:var(--bg)}
   </style>
 </head>
 <body>
@@ -190,12 +215,20 @@
     <div class="hrow">
       <h1>ghost.</h1>
       <div class="hbtns">
+        <span id="onlinebadge"><span class="gdot"></span><span id="onlinecount">1</span></span>
         <span id="rbadge">—</span>
+        <button class="hbtn" id="sharebtn" title="Share room">🔗</button>
         <button class="hbtn" id="thmbtn" title="Theme">🎨</button>
         <button class="hbtn" id="mutebtn" title="Sound">🔔</button>
       </div>
     </div>
     <div id="idn"><span class="dot"></span>You are <span class="nm" id="myname"></span><span style="margin-left:auto;font-size:10px;opacity:.3">🗑️24h</span></div>
+    <!-- Share panel -->
+    <div id="sharepanel">
+      <p>Share Room</p>
+      <div id="shareurl"></div>
+      <button id="copylinkbtn">📋 Copy Link</button>
+    </div>
     <!-- Theme panel -->
     <div id="tpanel">
       <p>Theme</p>
@@ -226,6 +259,13 @@
     </div>
     <input type="file" id="fimg" accept="image/*"/>
   </div>
+</div>
+
+<!-- Context Menu -->
+<div id="ctx">
+  <div class="citem" id="ctx-copy">📋 Copy message</div>
+  <div class="citem" id="ctx-time">⏰ Show timestamp</div>
+  <div class="citem red" id="ctx-del">🗑️ Delete message</div>
 </div>
 
 <script>
@@ -284,121 +324,46 @@ if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(
 // Close panels on click outside
 document.addEventListener("click",()=>{
   document.getElementById("tpanel").classList.remove("on");
+  document.getElementById("sharepanel").classList.remove("on");
+  document.getElementById("ctx").classList.remove("on");
   document.querySelectorAll(".epick.on").forEach(p=>p.classList.remove("on"));
 });
 
-// Header buttons
-document.getElementById("thmbtn").addEventListener("click",e=>{document.getElementById("tpanel").classList.toggle("on");e.stopPropagation()});
-document.getElementById("mutebtn").addEventListener("click",()=>{muted=!muted;document.getElementById("mutebtn").textContent=muted?"🔕":"🔔";toast(muted?"Sound off":"Sound on")});
+// Context menu state
+let ctxTarget=null;
 
-// SETUP
-const enterbtn = document.getElementById("enterbtn");
-const rname    = document.getElementById("rname");
-const rpass    = document.getElementById("rpass");
-const uname    = document.getElementById("uname");
-const errEl    = document.getElementById("err");
-const spinEl   = document.getElementById("spin");
-const sptxt    = document.getElementById("sptxt");
-
-rname.addEventListener("keydown",e=>{if(e.key==="Enter")rpass.focus()});
-rpass.addEventListener("keydown",e=>{if(e.key==="Enter")doConnect()});
-enterbtn.addEventListener("click",doConnect);
-
-function doConnect(){
-  const room = rname.value.trim().replace(/\s+/g,"-").toLowerCase();
-  const pass = rpass.value.trim();
-  const name = uname.value.trim() || genName(ME);
-
-  if(!room){errEl.textContent="⚠ Enter a room name";return}
-  errEl.textContent="";
-  enterbtn.disabled=true;
-  enterbtn.textContent="Connecting...";
-  spinEl.classList.add("on");
-  sptxt.textContent="connecting...";
-
-  // Load socket.io then connect
-  if(window.io){
-    startConnect(room,pass,name);
-  } else {
-    const s=document.createElement("script");
-    s.src=SRV+"/socket.io/socket.io.js";
-    s.onload=()=>startConnect(room,pass,name);
-    s.onerror=()=>{
-      spinEl.classList.remove("on");
-      errEl.textContent="⚠ Server offline. Wait 30s and retry.";
-      enterbtn.disabled=false;
-      enterbtn.textContent="Enter →";
-    };
-    document.head.appendChild(s);
-  }
+function showCtx(e,msgEl,m,isMe,socket,room){
+  e.preventDefault();e.stopPropagation();
+  const ctx=document.getElementById("ctx");
+  ctxTarget={msgEl,m,isMe,socket,room};
+  // Show/hide delete only for own msgs
+  document.getElementById("ctx-del").style.display=isMe?"flex":"none";
+  // Position
+  ctx.style.left=Math.min(e.clientX,window.innerWidth-170)+"px";
+  ctx.style.top=Math.min(e.clientY,window.innerHeight-120)+"px";
+  ctx.classList.add("on");
 }
 
-function startConnect(room,pass,myName){
-  let tries=0;
-  function tryNow(){
-    tries++;
-    sptxt.textContent=tries>1?"retrying ("+tries+"/3)...":"connecting...";
-    const socket=io(SRV,{timeout:25000,transports:["websocket","polling"],reconnectionAttempts:5});
-    let ok=false;
+document.getElementById("ctx-copy").addEventListener("click",()=>{
+  if(!ctxTarget)return;
+  const txt=ctxTarget.m.text||"[image]";
+  navigator.clipboard.writeText(txt).then(()=>toast("📋 Copied!")).catch(()=>toast("Copy failed"));
+  document.getElementById("ctx").classList.remove("on");
+});
 
-    socket.on("connect",()=>{
-      ok=true;
-      socket.emit("join_room",{room,password:pass,username:myName});
-    });
+document.getElementById("ctx-time").addEventListener("click",()=>{
+  if(!ctxTarget)return;
+  const el=ctxTarget.msgEl;
+  let tip=el.querySelector(".tstip");
+  if(!tip){tip=document.createElement("div");tip.className="tstip";el.appendChild(tip)}
+  const d=new Date(ctxTarget.m.ts);
+  tip.textContent=d.toLocaleString();
+  tip.classList.toggle("on");
+  document.getElementById("ctx").classList.remove("on");
+});
 
-    socket.on("wrong_password",()=>{
-      spinEl.classList.remove("on");
-      socket.disconnect();
-      errEl.textContent="⚠ Wrong password!";
-      enterbtn.disabled=false;
-      enterbtn.textContent="Enter →";
-    });
-
-    socket.on("load_messages",msgs=>{
-      spinEl.classList.remove("on");
-      document.getElementById("setup").style.display="none";
-      const appEl=document.getElementById("app");
-      appEl.style.display="flex";
-      document.getElementById("myname").textContent=myName;
-      document.getElementById("rbadge").textContent=(pass?"🔒 ":"")+room;
-
-      const box=document.getElementById("msgs");
-      document.getElementById("ldmsg")?.remove();
-      if(msgs.length===0){addSys("be the first to speak",box)}
-      else{msgs.forEach(m=>addMsg(m,box,socket,room));box.scrollTop=box.scrollHeight}
-
-      initChat(socket,room,myName,box);
-    });
-
-    socket.on("connect_error",()=>{
-      if(!ok){
-        if(tries<3)setTimeout(tryNow,6000);
-        else{
-          spinEl.classList.remove("on");
-          errEl.textContent="⚠ Cannot connect. Try again.";
-          enterbtn.disabled=false;
-          enterbtn.textContent="Enter →";
-        }
-      }
-    });
-  }
-  tryNow();
-}
-
-function initChat(socket,room,myName,box){
-  const inp   = document.getElementById("minput");
-  const sndbtn= document.getElementById("sndbtn");
-  const cc    = document.getElementById("cc");
-  const flash = document.getElementById("flash");
-  const typEl = document.getElementById("typing");
-  const fimg  = document.getElementById("fimg");
-
-  socket.on("new_message",m=>{
-    if(m.anonId!==ME){addMsg(m,box,socket,room);box.scrollTop=box.scrollHeight;beep();toast(m.anonName+" sent a message")}
-  });
-  socket.on("update_reactions",({msgId,reactions})=>{
-    const el=document.querySelector('[data-mid="'+msgId+'"] .reacts');
-    if(el)drawReacts(el,reactions,msgId,socket,room);
-  });
-  socket.on("typing_update",users=>{
-    typEl.textContent=users.length===0
+document.getElementById("ctx-del").addEventListener("click",()=>{
+  if(!ctxTarget||!ctxTarget.isMe)return;
+  ctxTarget.socket.emit("delete_message",{room:ctxTarget.room,msgId:ctxTarget.m.id,anonId:ME});
+  ctxTarget.msgEl.style.animation="none";
+  ctxTarget.msgEl.style.
