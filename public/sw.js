@@ -1,36 +1,22 @@
-const CACHE_NAME = "ghost-chat-v1";
-const ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.json"
-];
+// ghost. service worker v4 — force cache clear
+const CACHE = "ghost-v4";
 
-// Install — cache assets
-self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+self.addEventListener("install", e => {
   self.skipWaiting();
 });
 
-// Activate — clean old caches
-self.addEventListener("activate", (e) => {
+self.addEventListener("activate", e => {
   e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    caches.keys().then(keys =>
+      Promise.all(keys.map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch — serve from cache, fallback to network
-self.addEventListener("fetch", (e) => {
-  // Don't cache socket.io or API calls
-  if (e.request.url.includes("socket.io") || e.request.url.includes("/messages/")) {
-    return fetch(e.request);
+// Network first — no caching (fixes stale file issues)
+self.addEventListener("fetch", e => {
+  if (e.request.url.includes("socket.io") || e.request.url.includes("fonts.googleapis")) {
+    return;
   }
-
-  e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request))
-  );
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
 });
