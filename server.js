@@ -10,10 +10,12 @@ const server = http.createServer(app);
 
 // Initialize Socket.io with CORS and buffer limits
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
-  maxHttpBufferSize: 5 * 1024 * 1024, // 5MB limit for images
-  pingTimeout: 60000,
-  pingInterval: 25000
+  cors: { 
+    origin: "*", 
+    methods: ["GET", "POST"] 
+  },
+  transports: ["websocket", "polling"], // Allow fallback to polling if WS fails
+  allowEIO3: true // Support older socket.io clients if necessary
 });
 
 app.use(cors());
@@ -142,4 +144,5 @@ setInterval(() => {
     console.log("keep-alive:", res.statusCode);
   }).on("error", (err) => console.log("ping err:", err.message));
 }, 13 * 60 * 1000);
+
 
