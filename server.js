@@ -17,73 +17,93 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static("public"));
-app.get("/ping", (req, res) => res.send("pong"));
-app.get("/health", (req, res) => res.json({ status: "ok", rooms: Object.keys(rooms).length }));
 
 const rooms = {};
 const typingUsers = {};
 
+// Helper: Ensure room exists
 function getRoom(name) {
-  if (!rooms[name]) rooms[name] = { password: null, messages: [], createdAt: Date.now() };
+  if (!rooms[name]) {
+    rooms[name] = { 
+      password: null, 
+      messages: [], 
+      createdAt: Date.now() 
+    };
+  }
   return rooms[name];
 }
 
-// Clean old messages every 10 minutes
+// Helper: Get count of users in a room
+function getRoomSize(roomName) {
+  const room = io.sockets.adapter.rooms.get(roomName);
+  return room ? room.size : 0;
+}
+
+// Clean old messages every 10 minutes (Keep last 24h)
 setInterval(() => {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  for (const name of Object.keys(rooms)) {
+  for (const name in rooms) {
     rooms[name].messages = rooms[name].messages.filter(m => m.ts > cutoff);
+    // Delete empty rooms after 24h of inactivity
+    if (rooms[name].messages.length === 0 && getRoomSize(name) === 0) {
+      delete rooms[name];
+    }
   }
 }, 10 * 60 * 1000);
 
-function getRoomSize(room) {
-  return io.sockets.adapter.rooms.get(room)?.size || 0;
-}
+app.get("/ping", (req, res) => res.send("pong"));
+app.get("/health", (req, res) => res.json({ status: "ok", rooms: Object.keys(rooms).length }));
+
+
 
 io.on("connection", (socket) => {
   console.log("+ connected:", socket.id);
 
-  socket.on("join_room", ({ room, password, username }) => {
+  // Match frontend 'join' event
+  socket.on("join", ({ room, pass, name, anonId }) => {
     if (!room) return;
     const r = getRoom(room);
 
-    // Check password
-    if (r.password && r.password !== password) {
-      socket.emit("wrong_password");
+    // Password Logic
+    if (r.password && r.password !== pass) {
+      socket.emit("error_msg", "Wrong password");
       return;
     }
-    // Set password if first user sets one
-    if (!r.password && password) r.password = password;
+    if (!r.password && pass) r.password = pass;
 
     socket.join(room);
     socket.currentRoom = room;
-    socket.myName = username || "Ghost";
+    socket.myName = name || "Ghost";
+    socket.anonId = anonId;
 
-    // Send message history
+    // Send history
     socket.emit("load_messages", r.messages);
 
-    // Notify room
-    socket.to(room).emit("system_message", { text: socket.myName + " joined" });
-
-    // Online count to everyone in room
+    // Notify room and update count
     io.to(room).emit("online_count", getRoomSize(room));
+    socket.to(room).emit("system_message", { text: `${socket.myName} joined` });
   });
 
   socket.on("send_message", (data) => {
     const { room, text, image, anonId, anonName } = data;
     if (!room || (!text && !image)) return;
+    
     const r = getRoom(room);
     const msg = {
       id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
       text: text ? String(text).slice(0, 280) : null,
       image: image || null,
-      anonId, anonName,
+      anonId, 
+      anonName,
       ts: Date.now(),
       reactions: {}
     };
+
     r.messages.push(msg);
     if (r.messages.length > 100) r.messages.shift();
-    io.to(room).emit("new_message", msg);
+    
+    // Broadcast to everyone in room including sender
+    io.to(room).emit("message", msg); 
   });
 
   socket.on("delete_message", ({ room, msgId, anonId }) => {
@@ -95,55 +115,24 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("add_reaction", ({ room, msgId, emoji, anonId }) => {
-    const r = getRoom(room);
-    const msg = r.messages.find(m => m.id === msgId);
-    if (!msg) return;
-    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
-    const idx = msg.reactions[emoji].indexOf(anonId);
-    if (idx === -1) msg.reactions[emoji].push(anonId);
-    else {
-      msg.reactions[emoji].splice(idx, 1);
-      if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
-    }
-    io.to(room).emit("update_reactions", { msgId, reactions: msg.reactions });
-  });
-
-  socket.on("typing_start", ({ room, anonName }) => {
-    if (!typingUsers[room]) typingUsers[room] = {};
-    typingUsers[room][socket.id] = anonName;
-    socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
-  });
-
-  socket.on("typing_stop", ({ room }) => {
-    if (typingUsers[room]) {
-      delete typingUsers[room][socket.id];
-      socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
-    }
-  });
-
   socket.on("disconnect", () => {
-    console.log("- disconnected:", socket.id);
     const room = socket.currentRoom;
     if (room) {
-      if (typingUsers[room]) {
-        delete typingUsers[room][socket.id];
-        socket.to(room).emit("typing_update", Object.values(typingUsers[room]));
-      }
-      socket.to(room).emit("system_message", { text: (socket.myName || "Someone") + " left" });
-      socket.to(room).emit("online_count", getRoomSize(room));
+      io.to(room).emit("online_count", getRoomSize(room));
+      socket.to(room).emit("system_message", { text: `${socket.myName || "Someone"} left` });
     }
+    console.log("- disconnected:", socket.id);
   });
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, '0.0.0.0', () => console.log("✓ ghost. server running on port", ${PORT}');
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✓ ghost. server running on port ${PORT}`);
 });
 
-// Keep-alive ping every 13 minutes
+// Keep-alive ping to prevent Render from sleeping
 setInterval(() => {
   https.get("https://anonymsgn.onrender.com/ping", (res) => {
-    console.log("keep-alive ping:", res.statusCode);
+    console.log("keep-alive status:", res.statusCode);
   }).on("error", (e) => console.log("keep-alive err:", e.message));
 }, 13 * 60 * 1000);
-
