@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-  <title>ghost. — anonymous</title>
+  <title>ghost. — anonymous messages</title>
 
-  <!-- PWA Meta Tags -->
+  <!-- PWA -->
   <meta name="theme-color" content="#0a0a0f"/>
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="ghost."/>
-  <meta name="description" content="Anonymous real-time chat"/>
-
-  <!-- PWA Icons -->
   <link rel="manifest" href="/manifest.json"/>
-  <link rel="icon" href="/icon-192.png"/>
   <link rel="apple-touch-icon" href="/icon-192.png"/>
 
+  <!-- ✅ Load socket.io directly from server — fixes connection issue -->
+  <script src="https://anonymsgn.onrender.com/socket.io/socket.io.js"></script>
+
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital@0;1&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -31,7 +31,6 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      /* Safe area for notched phones */
       padding-top: env(safe-area-inset-top);
       padding-bottom: env(safe-area-inset-bottom);
     }
@@ -46,52 +45,6 @@
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-
-    /* Install banner */
-    #install-banner {
-      display: none;
-      position: fixed;
-      bottom: 80px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: #1e1a14;
-      border: 1px solid #4a3a2a;
-      border-radius: 10px;
-      padding: 12px 20px;
-      z-index: 999;
-      font-size: 12px;
-      color: #d4c8b4;
-      letter-spacing: 1px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
-      white-space: nowrap;
-    }
-
-    #install-banner.show { display: flex; }
-
-    #install-btn {
-      background: #c8b49a;
-      color: #0a0a0f;
-      border: none;
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-family: 'Space Mono', monospace;
-      font-size: 11px;
-      cursor: pointer;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-    }
-
-    #dismiss-btn {
-      background: transparent;
-      border: none;
-      color: #555;
-      cursor: pointer;
-      font-size: 16px;
-      padding: 0 4px;
-    }
 
     /* Setup */
     #setup-screen {
@@ -118,10 +71,9 @@
     .setup-input {
       width: 100%; background: #111118; border: 1px solid #222230;
       border-radius: 6px; padding: 12px; color: #e0d8cc;
-      font-family: 'Space Mono', monospace; font-size: 14px; margin-bottom: 14px;
+      font-family: 'Space Mono', monospace;
+      font-size: 16px; margin-bottom: 14px;
       transition: border-color 0.2s;
-      /* Prevent zoom on iOS */
-      font-size: 16px;
     }
     .setup-input:focus { outline: none; border-color: #6b5a46; }
     .setup-input::placeholder { color: #333; }
@@ -134,13 +86,40 @@
       font-family: 'Space Mono', monospace; font-size: 12px; cursor: pointer;
       letter-spacing: 2px; text-transform: uppercase; transition: all 0.2s;
     }
-    #start-btn:hover { background: #c8b49a; color: #0a0a0f; }
+    #start-btn:hover:not(:disabled) { background: #c8b49a; color: #0a0a0f; }
+    #start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .server-info {
       margin-top: 16px; font-size: 10px; color: #2a2a3a;
       letter-spacing: 1px; text-align: center; padding: 8px;
       border: 1px solid #1a1a22; border-radius: 6px;
     }
+
+    /* Connecting overlay */
+    #connecting {
+      display: none;
+      position: fixed; inset: 0;
+      background: #0a0a0f;
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    #connecting.show { display: flex; }
+
+    .spinner {
+      width: 32px; height: 32px;
+      border: 2px solid #222;
+      border-top-color: #6b5a46;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #connecting p { font-size: 11px; color: #444; letter-spacing: 2px; text-transform: uppercase; }
 
     /* App */
     #app {
@@ -165,7 +144,8 @@
 
     #room-badge {
       font-size: 10px; color: #555; letter-spacing: 2px;
-      text-transform: uppercase; border: 1px solid #222; padding: 3px 8px; border-radius: 4px;
+      text-transform: uppercase; border: 1px solid #222;
+      padding: 3px 8px; border-radius: 4px;
     }
 
     #identity { margin-top: 4px; font-size: 11px; color: #3a3a4a; display: flex; align-items: center; gap: 6px; }
@@ -216,7 +196,7 @@
       flex: 1; background: #111118; border: 1px solid #222230;
       border-radius: 8px; padding: 10px 12px; color: #e0d8cc;
       font-family: 'Space Mono', monospace;
-      font-size: 16px; /* Prevent iOS zoom */
+      font-size: 16px;
       resize: none; line-height: 1.5; transition: border-color 0.2s; height: 56px;
     }
     #msg-input:focus { outline: none; border-color: #6b5a46; }
@@ -231,7 +211,6 @@
       border-radius: 6px; padding: 10px 14px; font-family: 'Space Mono', monospace;
       font-size: 11px; cursor: pointer; letter-spacing: 1px;
       text-transform: uppercase; transition: all 0.2s; white-space: nowrap;
-      /* Better touch target */
       min-height: 44px;
     }
     #send-btn:hover:not(:disabled) { background: #c8b49a; color: #0a0a0f; }
@@ -240,11 +219,10 @@
 </head>
 <body>
 
-<!-- Install Banner -->
-<div id="install-banner">
-  📲 Install ghost. as an app!
-  <button id="install-btn">Install</button>
-  <button id="dismiss-btn">✕</button>
+<!-- Connecting spinner -->
+<div id="connecting">
+  <div class="spinner"></div>
+  <p id="connecting-text">waking up server...</p>
 </div>
 
 <!-- Setup -->
@@ -257,9 +235,9 @@
     <input class="setup-input" id="room-name" placeholder="e.g. my-secret-room" autofocus/>
 
     <div id="setup-error"></div>
-    <button id="start-btn">Enter the Void →</button>
+    <button id="start-btn">Enter →</button>
 
-    <div class="server-info">⚡ powered by NENE RA</div>
+    <div class="server-info">⚡ anonymsgn.onrender.com</div>
   </div>
 </div>
 
@@ -277,7 +255,7 @@
   </div>
 
   <div id="messages">
-    <div class="system-msg" id="loading">connecting...</div>
+    <div class="system-msg" id="loading">joining room...</div>
   </div>
 
   <div id="input-area">
@@ -293,41 +271,6 @@
 </div>
 
 <script>
-  // ✅ Register Service Worker for PWA
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js")
-        .then(() => console.log("SW registered"))
-        .catch((e) => console.log("SW error:", e));
-    });
-  }
-
-  // ✅ PWA Install prompt
-  let deferredPrompt;
-  const installBanner = document.getElementById("install-banner");
-  const installBtn    = document.getElementById("install-btn");
-  const dismissBtn    = document.getElementById("dismiss-btn");
-
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    installBanner.classList.add("show");
-  });
-
-  installBtn.addEventListener("click", async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      installBanner.classList.remove("show");
-    }
-  });
-
-  dismissBtn.addEventListener("click", () => {
-    installBanner.classList.remove("show");
-  });
-
-  // ✅ Hardcoded server URL
   const SERVER_URL = "https://anonymsgn.onrender.com";
 
   const ADJECTIVES = ["Silent","Shadow","Hollow","Ashen","Drifting","Nameless","Veiled","Pale","Lost","Echoing"];
@@ -359,55 +302,87 @@
   const MY_ID   = getAnonId();
   const MY_NAME = getAnonName(MY_ID);
 
-  document.getElementById("start-btn").addEventListener("click", connect);
-  document.getElementById("room-name").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") connect();
-  });
-
-  function connect() {
-    const room  = document.getElementById("room-name").value.trim().replace(/\s+/g,"-").toLowerCase();
-    const errEl = document.getElementById("setup-error");
-    if (!room) { errEl.textContent = "⚠ Please enter a room name"; return; }
-    errEl.textContent = "";
-    document.getElementById("start-btn").textContent = "Connecting...";
-
-    const script = document.createElement("script");
-    script.src = SERVER_URL + "/socket.io/socket.io.js";
-    script.onload = () => startApp(room);
-    script.onerror = () => {
-      errEl.textContent = "⚠ Server waking up — wait 30 seconds and try again!";
-      document.getElementById("start-btn").textContent = "Enter the Void →";
-    };
-    document.head.appendChild(script);
+  // PWA service worker
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
   }
 
-  function startApp(room) {
-    const socket = io(SERVER_URL);
+  const startBtn     = document.getElementById("start-btn");
+  const roomInput    = document.getElementById("room-name");
+  const errEl        = document.getElementById("setup-error");
+  const connecting   = document.getElementById("connecting");
+  const connectText  = document.getElementById("connecting-text");
 
-    socket.on("connect", () => {
-      document.getElementById("setup-screen").style.display = "none";
-      document.getElementById("app").style.display = "flex";
-      document.getElementById("room-badge").textContent = "room: " + room;
-      document.getElementById("my-name").textContent = MY_NAME;
-      socket.emit("join_room", room);
-    });
+  startBtn.addEventListener("click", connect);
+  roomInput.addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
 
-    socket.on("connect_error", () => {
-      document.getElementById("setup-error").textContent = "⚠ Connection failed — wait 30s and retry";
-      document.getElementById("start-btn").textContent = "Enter the Void →";
-      document.getElementById("setup-screen").style.display = "flex";
-      document.getElementById("app").style.display = "none";
-    });
+  function connect() {
+    const room = roomInput.value.trim().replace(/\s+/g, "-").toLowerCase();
+    if (!room) { errEl.textContent = "⚠ Please enter a room name"; return; }
 
-    const msgBox = document.getElementById("messages");
+    errEl.textContent = "";
+    startBtn.disabled = true;
+    startBtn.textContent = "Connecting...";
+
+    // Show spinner
+    connecting.classList.add("show");
+    connectText.textContent = "waking up server...";
+
+    // Try to connect with retry logic
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    function tryConnect() {
+      attempts++;
+      connectText.textContent = attempts > 1 ? `retrying... (${attempts}/${maxAttempts})` : "connecting...";
+
+      const socket = io(SERVER_URL, {
+        timeout: 20000,
+        reconnectionAttempts: 3,
+        transports: ["websocket", "polling"]
+      });
+
+      let connected = false;
+
+      socket.on("connect", () => {
+        connected = true;
+        connecting.classList.remove("show");
+        document.getElementById("setup-screen").style.display = "none";
+        document.getElementById("app").style.display = "flex";
+        document.getElementById("room-badge").textContent = "room: " + room;
+        document.getElementById("my-name").textContent = MY_NAME;
+        socket.emit("join_room", room);
+        setupChat(socket, room);
+      });
+
+      socket.on("connect_error", () => {
+        if (!connected) {
+          if (attempts < maxAttempts) {
+            setTimeout(tryConnect, 5000);
+          } else {
+            connecting.classList.remove("show");
+            errEl.textContent = "⚠ Cannot connect. Check your internet or try again.";
+            startBtn.disabled = false;
+            startBtn.textContent = "Enter →";
+          }
+        }
+      });
+    }
+
+    tryConnect();
+  }
+
+  function setupChat(socket, room) {
+    const msgBox   = document.getElementById("messages");
+    const input    = document.getElementById("msg-input");
+    const sendBtn  = document.getElementById("send-btn");
+    const charSpan = document.getElementById("char-count");
+    const flash    = document.getElementById("flash");
 
     socket.on("load_messages", (messages) => {
       document.getElementById("loading")?.remove();
       if (messages.length === 0) {
-        const sys = document.createElement("div");
-        sys.className = "system-msg";
-        sys.textContent = "be the first to speak into the void";
-        msgBox.appendChild(sys);
+        addSystem("be the first to speak", msgBox);
       } else {
         messages.forEach(msg => renderMessage(msg, msgBox));
         msgBox.scrollTop = msgBox.scrollHeight;
@@ -422,19 +397,18 @@
     });
 
     socket.on("system_message", (data) => {
-      const sys = document.createElement("div");
-      sys.className = "system-msg";
-      sys.textContent = data.text;
-      msgBox.appendChild(sys);
-      msgBox.scrollTop = msgBox.scrollHeight;
+      addSystem(data.text, msgBox);
     });
 
-    const input    = document.getElementById("msg-input");
-    const sendBtn  = document.getElementById("send-btn");
-    const charSpan = document.getElementById("char-count");
-    const flash    = document.getElementById("flash");
+    socket.on("disconnect", () => {
+      addSystem("disconnected — trying to reconnect...", msgBox);
+    });
 
-    // Fix mobile keyboard pushing layout
+    socket.on("reconnect", () => {
+      addSystem("reconnected ✓", msgBox);
+      socket.emit("join_room", room);
+    });
+
     input.addEventListener("focus", () => {
       setTimeout(() => msgBox.scrollTop = msgBox.scrollHeight, 300);
     });
@@ -447,7 +421,10 @@
     });
 
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!sendBtn.disabled) sendMessage(); }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (!sendBtn.disabled) sendMessage();
+      }
     });
 
     sendBtn.addEventListener("click", sendMessage);
@@ -465,6 +442,14 @@
       flash.textContent = "✓ sent";
       setTimeout(() => flash.textContent = "", 1500);
     }
+  }
+
+  function addSystem(text, msgBox) {
+    const sys = document.createElement("div");
+    sys.className = "system-msg";
+    sys.textContent = text;
+    msgBox.appendChild(sys);
+    msgBox.scrollTop = msgBox.scrollHeight;
   }
 
   function renderMessage(msg, msgBox) {
